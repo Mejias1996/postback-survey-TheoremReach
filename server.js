@@ -1,45 +1,46 @@
-// server.js o el archivo principal
 const express = require("express");
 const crypto = require("crypto");
 const fs = require("fs");
 const admin = require("firebase-admin");
+
 const app = express();
 
-// ✅ Carga tu clave de Firebase desde /etc/secrets/firebase-key.json
-const serviceAccount = require("/etc/secrets/firebase-key.json");
+// ✅ Ruta segura donde montas el secreto en Render o tu servidor
+const serviceAccountPath = "/etc/secrets/firebase-service-account.json";
+const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf8"));
 
+// ✅ Inicializa Firebase Admin SDK
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  databaseURL: "https://<TU-PROYECTO>.firebaseio.com" // reemplaza con tu URL
+  databaseURL: "https://surveyrewardsap1.firebaseio.com", // ← TU project_id
 });
 
 const db = admin.firestore();
 
-// Clave secreta para HMAC que te dio TheoremReach
+// ✅ Clave secreta para HMAC que te dio TheoremReach
 const THEOREM_SECRET = "d8e01d553dc47a3ef5b4088198d402c10b05b8f3";
 
-// Endpoint para recibir recompensas
+// ✅ Ruta para recibir postbacks de TheoremReach
 app.get("/theorem/reward", async (req, res) => {
   const originalUrl = req.originalUrl;
   const queryString = originalUrl.split("?")[1];
 
-  console.log("URL original completa:", originalUrl);
-  console.log("Query string original:", queryString);
+  console.log("🌐 URL original:", originalUrl);
 
-  // Extrae todos los parámetros
+  // Extrae y limpia los parámetros
   const params = { ...req.query };
   const receivedHash = params.hash;
-  delete params.hash; // 🔥 muy importante: elimina el hash antes de firmar
+  delete params.hash;
 
-  // Reconstruye la query sin el hash, en el mismo orden que se recibió
+  // Reconstruye el string que firmó TheoremReach (sin alterar el orden)
   const queryParts = queryString
     .split("&")
-    .filter(part => !part.startsWith("hash=")); // eliminar el hash del string
-
+    .filter(part => !part.startsWith("hash="));
   const stringToSign = queryParts.join("&");
 
+  // 🔐 Genera hash con HMAC SHA-1 como pide TheoremReach
   const generatedHash = crypto
-    .createHmac("sha1", THEOREM_SECRET) // ✅ correcto
+    .createHmac("sha1", THEOREM_SECRET)
     .update(stringToSign)
     .digest("base64")
     .replace(/\+/g, "-")
@@ -50,30 +51,31 @@ app.get("/theorem/reward", async (req, res) => {
   console.log("🔐 Hash generado:", generatedHash);
 
   if (generatedHash !== receivedHash) {
-    console.log("❌ Hash inválido. Rechazando petición.");
+    console.warn("⚠️ Hash inválido. Ignorando.");
     return res.status(403).send("Invalid hash");
   }
 
   try {
     const { user_id, reward, currency, tx_id } = req.query;
 
-    // Guarda en Firebase
+    // ✅ Guarda en Firestore
     await db.collection("rewards").add({
       user_id,
       reward: Number(reward),
       currency: Number(currency),
       tx_id,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
 
-    console.log(`✅ Recompensa procesada para user_id: ${user_id}`);
+    console.log(`✅ Recompensa otorgada a user_id: ${user_id}`);
     res.status(200).send("OK");
-  } catch (error) {
-    console.error("🔥 Error guardando recompensa:", error);
+  } catch (err) {
+    console.error("🔥 Error al guardar recompensa:", err);
     res.status(500).send("Internal server error");
   }
 });
 
+// ✅ Puerto
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor escuchando en puerto ${PORT}`);
