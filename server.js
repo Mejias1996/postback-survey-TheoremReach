@@ -6,7 +6,7 @@ const admin = require("firebase-admin");
 const PORT = process.env.PORT || 10000;
 
 // Inicializa Firebase Admin SDK
-const serviceAccount = require("./clave-privada-firebase.json"); // 🔐 Tu archivo de claves privadas de Firebase
+const serviceAccount = require("/etc/secrets/clave-privada-firebase.json"); // 🔐 Tu archivo de claves privadas de Firebase
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
