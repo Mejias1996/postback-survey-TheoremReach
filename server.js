@@ -6,7 +6,7 @@ const admin = require("firebase-admin");
 const app = express();
 
 // ✅ Ruta segura donde montas el secreto en Render o tu servidor
-const serviceAccountPath = "/etc/secrets/firebase-service-account.json";
+const serviceAccountPath = "/etc/secrets/firebase-key.json";
 const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf8"));
 
 // ✅ Inicializa Firebase Admin SDK
