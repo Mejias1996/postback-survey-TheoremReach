@@ -39,7 +39,7 @@ app.get("/theorem/reward", async (req, res) => {
   const stringToSign = queryParts.join("&");
 
   const generatedHash = crypto
-    .createHmac("sha256", THEOREM_SECRET)
+    .createHmac("sha1", THEOREM_SECRET) // ✅ correcto
     .update(stringToSign)
     .digest("base64")
     .replace(/\+/g, "-")
