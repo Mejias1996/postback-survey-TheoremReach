@@ -1,70 +1,65 @@
-const express = require("express");
-const crypto = require("crypto");
-const fs = require("fs");
-const admin = require("firebase-admin");
-
+const express = require('express');
+const crypto = require('crypto');
 const app = express();
 
-const serviceAccountPath = "/etc/secrets/firebase-key.json";
-const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf8"));
-
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-  databaseURL: "https://surveyrewardsap1.firebaseio.com",
-});
-
-const db = admin.firestore();
-const THEOREM_SECRET = "d8e01d553dc47a3ef5b4088198d402c10b05b8f3";
-
-app.get("/theorem/reward", async (req, res) => {
-  // ❗ Forzar https (Render solo acepta https)
-  const fullUrl = `https://postback-survey-theoremreach.onrender.com${req.originalUrl}`;
-  const stringToSign = fullUrl.split("&hash=")[0];
-
-  const generatedHash = crypto
-    .createHmac("sha1", THEOREM_SECRET)
-    .update(stringToSign)
-    .digest("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-
-  const receivedHash = req.query.hash;
-
-  console.log("🌐 URL original:", fullUrl);
-  console.log("❌ Hash recibido:", receivedHash);
-  console.log("🔐 Hash generado:", generatedHash);
-
-  if (generatedHash !== receivedHash) {
-    console.warn("⚠️ Hash inválido. Ignorando.");
-    return res.status(403).send("Invalid hash");
-  }
-
-  if (req.query.debug === "true") {
-    console.log("🧪 Test recibido (debug=true). No se guarda.");
-    return res.status(200).send("Test OK");
-  }
-
-  try {
-    const { user_id, reward, currency, tx_id } = req.query;
-
-    await db.collection("rewards").add({
-      user_id,
-      reward: Number(reward),
-      currency: Number(currency),
-      tx_id,
-      timestamp: new Date(),
-    });
-
-    console.log(`✅ Recompensa otorgada a user_id: ${user_id}`);
-    res.status(200).send("OK");
-  } catch (err) {
-    console.error("🔥 Error al guardar recompensa:", err);
-    res.status(500).send("Internal server error");
-  }
-});
-
 const PORT = process.env.PORT || 10000;
+
+// Clave privada (reemplaza por tu clave secreta real de TheoremReach)
+const PRIVATE_KEY = 'Yb2D2R9B5WZKVCj3YzFeGueH7dfM2EwU';
+
+// Ruta del postback
+app.get('/theorem/reward', (req, res) => {
+  const {
+    user_id,
+    app_id,
+    reward,
+    tx_id,
+    currency,
+    screenout,
+    profiler,
+    status,
+    offer_id,
+    hash,
+    debug
+  } = req.query;
+
+  // 1. Generar hash desde parámetros
+  const stringToHash = `${user_id}${reward}${tx_id}${PRIVATE_KEY}`;
+  const generatedHash = crypto
+    .createHash('sha1')
+    .update(stringToHash)
+    .digest('base64');
+
+  console.log(`🌐 URL original: ${req.originalUrl}`);
+  console.log(`❌ Hash recibido: ${hash}`);
+  console.log(`🔐 Hash generado: ${generatedHash}`);
+
+  // 2. Validar hash
+  if (generatedHash !== hash) {
+    console.log('❗ Hash inválido. Postback rechazado.');
+    return res.status(403).send('Invalid hash');
+  }
+
+  // 3. Si es un test (debug=true), solo informar
+  if (debug === 'true') {
+    console.log('🧪 Test recibido (debug=true). No se guarda.');
+    return res.status(200).send('Test received');
+  }
+
+  // 4. Recompensa real
+  console.log(`🎉 Recompensa REAL para el usuario ${user_id}:`);
+  console.log(`   ➤ ${reward} monedas`);
+  console.log(`   ➤ ID de transacción: ${tx_id}`);
+  console.log(`   ➤ Oferta: ${offer_id}`);
+
+  // 5. Aquí conectarías con tu base de datos o lógica
+  // Ejemplo ficticio:
+  // await updateUserCoins(user_id, reward);
+
+  res.status(200).send('Reward processed');
+});
+
+// Iniciar servidor
 app.listen(PORT, () => {
   console.log(`🚀 Servidor escuchando en puerto ${PORT}`);
 });
