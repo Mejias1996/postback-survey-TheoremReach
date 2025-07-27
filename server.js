@@ -1,35 +1,64 @@
 const express = require("express");
 const app = express();
 const crypto = require("crypto");
+const admin = require("firebase-admin");
 
 const PORT = process.env.PORT || 10000;
 
-// Reemplaza esto con tu Server-to-Server Key real de BitLabs
-const BITLABS_SECRET = "1Nl2e6XMIrATg4QcdJRWd3GXggk9WeM7";
+// Inicializa Firebase Admin SDK
+const serviceAccount = require("./clave-privada-firebase.json"); // 🔐 Tu archivo de claves privadas de Firebase
 
-app.get("/bitlabs/reward", (req, res) => {
-  const { user_id, amount, hash } = req.query;
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
 
-  if (!user_id || !amount || !hash) {
-    return res.status(400).send("Missing parameters");
-  }
+const db = admin.firestore();
 
-  // Validar el hash recibido
-  const computedHash = crypto
-    .createHmac("sha1", BITLABS_SECRET)
-    .update(`${user_id}:${amount}`)
-    .digest("hex");
+// Tu TheoremReach Secret Key
+const SECRET_KEY = "d8e01d553dc47a3ef5b4088198d402c10b05b8f3";
 
-  if (computedHash !== hash) {
+// Función para generar hash según TheoremReach
+function generateHash(fullUrl, key) {
+  const hmac = crypto.createHmac("sha1", key);
+  hmac.update(fullUrl);
+  const rawHash = hmac.digest();
+  const base64 = rawHash.toString("base64");
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// Ruta del postback
+app.get("/theorem/reward", async (req, res) => {
+  const fullUrl = req.protocol + "://" + req.get("host") + req.originalUrl.split("&hash=")[0];
+  const receivedHash = req.query.hash;
+  const generatedHash = generateHash(fullUrl, SECRET_KEY);
+
+  if (receivedHash !== generatedHash) {
     return res.status(403).send("Invalid hash");
   }
 
-  // Aquí va tu lógica para recompensar al usuario (ej. agregar puntos)
-  console.log(`✅ Usuario ${user_id} recibió ${amount} puntos.`);
+  const { user_id, reward } = req.query;
 
-  res.status(200).send("OK");
+  if (!user_id || !reward) {
+    return res.status(400).send("Missing user_id or reward");
+  }
+
+  try {
+    const userRef = db.collection("users").doc(user_id);
+    await db.runTransaction(async (t) => {
+      const doc = await t.get(userRef);
+      if (!doc.exists) throw new Error("User does not exist");
+      const currentPoints = doc.data().points || 0;
+      t.update(userRef, { points: currentPoints + parseInt(reward) });
+    });
+
+    console.log(`✅ Usuario ${user_id} ganó ${reward} puntos desde TheoremReach.`);
+    res.status(200).send("OK");
+  } catch (error) {
+    console.error("❌ Error al recompensar:", error);
+    res.status(500).send("Server error");
+  }
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 BitLabs Postback corriendo en puerto ${PORT}`);
+  console.log(`🚀 Servidor TheoremReach activo en puerto ${PORT}`);
 });
