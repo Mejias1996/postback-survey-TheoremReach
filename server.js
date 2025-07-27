@@ -1,11 +1,11 @@
 const express = require("express");
+const app = express();
 const crypto = require("crypto");
 const admin = require("firebase-admin");
 
-const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Inicializa Firebase Admin SDK con tu archivo de claves
+// Inicializa Firebase Admin SDK
 const serviceAccount = require("/etc/secrets/firebase-key.json");
 
 admin.initializeApp({
@@ -14,79 +14,77 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// Tu TheoremReach Secret Key
 const SECRET_KEY = "d8e01d553dc47a3ef5b4088198d402c10b05b8f3";
 
-// Función para generar hash compatible con TheoremReach
-function generateHash(url, key) {
+// Función para generar hash según TheoremReach
+function generateHash(fullUrl, key) {
   const hmac = crypto.createHmac("sha1", key);
-  hmac.update(url);
+  hmac.update(fullUrl);
   const rawHash = hmac.digest();
   const base64 = rawHash.toString("base64");
-  // Sustituir según especificaciones TheoremReach
   return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-// Ruta que recibe el callback de recompensa
 app.get("/theorem/reward", async (req, res) => {
   try {
-    // Construir URL sin el parámetro hash para validar
-    const fullUrlWithoutHash = req.protocol + "://" + req.get("host") + req.originalUrl.split("&hash=")[0];
-    const receivedHash = req.query.hash;
+    const urlBase = req.protocol + "://" + req.get("host") + req.path;
 
-    // Validar hash
-    const generatedHash = generateHash(fullUrlWithoutHash, SECRET_KEY);
+    // Obtener query string original sin "hash" para mantener orden
+    const queryString = req.originalUrl.split("?")[1] || "";
+    const queryParams = queryString
+      .split("&")
+      .filter((p) => !p.startsWith("hash="));
+
+    const urlToHash = urlBase + "?" + queryParams.join("&");
+
+    const receivedHash = req.query.hash;
+    const generatedHash = generateHash(urlToHash, SECRET_KEY);
+
     if (receivedHash !== generatedHash) {
       console.log("❌ Hash inválido. Recibido:", receivedHash, "Generado:", generatedHash);
       return res.status(403).send("Invalid hash");
     }
 
-    // Obtener parámetros esenciales
     const { user_id, reward, tx_id, debug } = req.query;
 
-    // Ignorar callbacks de prueba/debug
+    // Ignorar callbacks de debug
     if (debug === "true") {
-      console.log("🔧 Callback de debug recibido, ignorado.");
+      console.log("⚠️ Callback de debug recibido, ignorando.");
       return res.status(200).send("Debug callback ignored");
     }
 
     if (!user_id || !reward || !tx_id) {
-      return res.status(400).send("Missing user_id, reward or tx_id");
+      return res.status(400).send("Missing required parameters");
     }
 
-    // Revisar si la transacción ya existe para evitar doble pago
+    const userRef = db.collection("users").doc(user_id);
     const txRef = db.collection("transactions").doc(tx_id);
+
+    // Verificar si la transacción ya fue procesada
     const txDoc = await txRef.get();
     if (txDoc.exists) {
-      console.log(`🔁 Transacción ${tx_id} ya procesada.`);
       return res.status(200).send("Transaction already processed");
     }
 
-    // Actualizar puntos del usuario
-    const userRef = db.collection("users").doc(user_id);
-    await db.runTransaction(async (transaction) => {
-      const userDoc = await transaction.get(userRef);
+    // Actualizar puntos del usuario dentro de una transacción
+    await db.runTransaction(async (t) => {
+      const userDoc = await t.get(userRef);
       if (!userDoc.exists) {
-        // Si no existe el usuario, lo creamos con puntos iniciales
-        transaction.set(userRef, { points: parseInt(reward, 10) });
+        // Crear usuario si no existe
+        t.set(userRef, { points: parseInt(reward) });
       } else {
         const currentPoints = userDoc.data().points || 0;
-        transaction.update(userRef, { points: currentPoints + parseInt(reward, 10) });
+        t.update(userRef, { points: currentPoints + parseInt(reward) });
       }
-
-      // Guardar la transacción para evitar repetirla
-      transaction.set(txRef, {
-        user_id,
-        reward: parseInt(reward, 10),
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      });
+      // Registrar la transacción para evitar duplicados
+      t.set(txRef, { user_id, reward: parseInt(reward), timestamp: admin.firestore.FieldValue.serverTimestamp() });
     });
 
-    console.log(`✅ Usuario ${user_id} recompensado con ${reward} puntos. Tx: ${tx_id}`);
+    console.log(`✅ Usuario ${user_id} recompensado con ${reward} puntos. Transacción: ${tx_id}`);
 
     res.status(200).send("OK");
   } catch (error) {
-    console.error("❌ Error procesando el callback:", error);
+    console.error("❌ Error procesando postback:", error);
     res.status(500).send("Server error");
   }
 });
