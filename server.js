@@ -1,65 +1,70 @@
 const express = require('express');
 const crypto = require('crypto');
 const app = express();
-
 const PORT = process.env.PORT || 10000;
 
-// Clave privada (reemplaza por tu clave secreta real de TheoremReach)
-const PRIVATE_KEY = 'Yb2D2R9B5WZKVCj3YzFeGueH7dfM2EwU';
+// Cambia esto por tu secret key real de TheoremReach
+const SECRET_KEY = 'd8e01d553dc47a3ef5b4088198d402c10b05b8f3';
 
-// Ruta del postback
+// Base de datos temporal para evitar duplicados
+const rewardedTransactions = new Set();
+
+// Utilidad para verificar el hash HMAC-SHA1
+function verifyHash(url, providedHash) {
+    const hmac = crypto.createHmac('sha1', SECRET_KEY);
+    hmac.update(url);
+    let hash = hmac.digest('base64');
+
+    // Reemplazar caracteres según la doc
+    hash = hash.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+    return hash === providedHash;
+}
+
 app.get('/theorem/reward', (req, res) => {
-  const {
-    user_id,
-    app_id,
-    reward,
-    tx_id,
-    currency,
-    screenout,
-    profiler,
-    status,
-    offer_id,
-    hash,
-    debug
-  } = req.query;
+    const {
+        user_id,
+        reward,
+        tx_id,
+        hash,
+        debug
+    } = req.query;
 
-  // 1. Generar hash desde parámetros
-  const stringToHash = `${user_id}${reward}${tx_id}${PRIVATE_KEY}`;
-  const generatedHash = crypto
-    .createHash('sha1')
-    .update(stringToHash)
-    .digest('base64');
+    // 1. Ignorar si está en modo debug
+    if (debug === 'true') {
+        console.log('Debug callback recibido. Ignorando...');
+        return res.status(200).send('Ignored debug callback');
+    }
 
-  console.log(`🌐 URL original: ${req.originalUrl}`);
-  console.log(`❌ Hash recibido: ${hash}`);
-  console.log(`🔐 Hash generado: ${generatedHash}`);
+    // 2. Evitar recompensas duplicadas
+    if (rewardedTransactions.has(tx_id)) {
+        console.log(`Transacción duplicada ignorada: ${tx_id}`);
+        return res.status(200).send('Transaction already processed');
+    }
 
-  // 2. Validar hash
-  if (generatedHash !== hash) {
-    console.log('❗ Hash inválido. Postback rechazado.');
-    return res.status(403).send('Invalid hash');
-  }
+    // 3. Validar el hash
+    const baseUrl = req.originalUrl.split('&hash=')[0]; // cortar desde &hash
+    const fullUrl = `https://postback-survey-theoremreach.onrender.com${baseUrl}`;
+    const valid = verifyHash(fullUrl, hash);
 
-  // 3. Si es un test (debug=true), solo informar
-  if (debug === 'true') {
-    console.log('🧪 Test recibido (debug=true). No se guarda.');
-    return res.status(200).send('Test received');
-  }
+    if (!valid) {
+        console.log('Hash inválido. Posible fraude.');
+        return res.status(403).send('Invalid hash');
+    }
 
-  // 4. Recompensa real
-  console.log(`🎉 Recompensa REAL para el usuario ${user_id}:`);
-  console.log(`   ➤ ${reward} monedas`);
-  console.log(`   ➤ ID de transacción: ${tx_id}`);
-  console.log(`   ➤ Oferta: ${offer_id}`);
+    // 4. Procesar recompensa
+    console.log(`✅ Recompensa procesada para el usuario ${user_id}: ${reward} monedas.`);
+    
+    // Aquí es donde deberías actualizar la base de datos real del usuario
+    // Ejemplo:
+    // await User.updateOne({ id: user_id }, { $inc: { coins: Number(reward) } });
 
-  // 5. Aquí conectarías con tu base de datos o lógica
-  // Ejemplo ficticio:
-  // await updateUserCoins(user_id, reward);
+    // Guardar la transacción como procesada
+    rewardedTransactions.add(tx_id);
 
-  res.status(200).send('Reward processed');
+    return res.status(200).send('Success');
 });
 
-// Iniciar servidor
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor escuchando en puerto ${PORT}`);
+    console.log(`🚀 Servidor escuchando en puerto ${PORT}`);
 });
