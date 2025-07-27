@@ -15,7 +15,7 @@ admin.initializeApp({
 const db = admin.firestore();
 
 // Clave secreta de TheoremReach
-const PRIVATE_KEY = "zOXvy5twEwzBeO";
+const PRIVATE_KEY = "d8e01d553dc47a3ef5b4088198d402c10b05b8f3";
 
 app.get("/theorem/reward", async (req, res) => {
   try {
