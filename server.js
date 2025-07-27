@@ -1,62 +1,48 @@
-const express = require("express");
-const crypto = require("crypto");
-const admin = require("firebase-admin");
-require("dotenv").config();
-
+const express = require('express');
+const crypto = require('crypto');
 const app = express();
-const port = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.applicationDefault(),
-  });
-}
-const db = admin.firestore();
+const SECRET_KEY = process.env.SECRET_KEY; // ahora usa .env
 
-const SECRET_KEY = "d8e01d553dc47a3ef5b4088198d402c10b05b8f3"; // TheoremReach secret key
+const rewardedTransactions = new Set();
 
-function generateHash(url, secretKey) {
-  const hmac = crypto.createHmac("sha1", secretKey);
-  hmac.update(url);
-  const hash = hmac.digest("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-  return hash;
+function verifyHash(url, providedHash) {
+    const hmac = crypto.createHmac('sha1', SECRET_KEY);
+    hmac.update(url);
+    let hash = hmac.digest('base64');
+    hash = hash.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return hash === providedHash;
 }
 
-app.get("/theorem/reward", async (req, res) => {
-  const { reward, user_id, tx_id, hash } = req.query;
+app.get('/theorem/reward', (req, res) => {
+    const { user_id, reward, tx_id, hash, debug } = req.query;
 
-  if (!reward || !user_id || !tx_id || !hash) {
-    return res.status(400).send("Missing parameters");
-  }
-
-  const baseUrl = `${req.protocol}://${req.get("host")}${req.originalUrl.split("&hash=")[0]}`;
-  const calculatedHash = generateHash(baseUrl, SECRET_KEY);
-
-  if (calculatedHash !== hash) {
-    return res.status(403).send("invalid hash");
-  }
-
-  try {
-    const userRef = db.collection("users").doc(user_id);
-    const userDoc = await userRef.get();
-
-    if (!userDoc.exists) {
-      await userRef.set({ points: parseInt(reward) });
-    } else {
-      const currentPoints = userDoc.data().points || 0;
-      await userRef.update({ points: currentPoints + parseInt(reward) });
+    if (debug === 'true') {
+        console.log('Debug callback recibido. Ignorando...');
+        return res.status(200).send('Ignored debug callback');
     }
 
-    return res.status(200).send("OK");
-  } catch (error) {
-    console.error("Firestore error:", error);
-    return res.status(500).send("Server error");
-  }
+    if (rewardedTransactions.has(tx_id)) {
+        console.log(`Transacción duplicada ignorada: ${tx_id}`);
+        return res.status(200).send('Transaction already processed');
+    }
+
+    const baseUrl = req.originalUrl.split('&hash=')[0];
+    const fullUrl = `https://${req.headers.host}${baseUrl}`;
+    const valid = verifyHash(fullUrl, hash);
+
+    if (!valid) {
+        console.log('❌ Hash inválido. Posible fraude.');
+        return res.status(403).send('Invalid hash');
+    }
+
+    console.log(`✅ Recompensa procesada para el usuario ${user_id}: ${reward} monedas.`);
+    rewardedTransactions.add(tx_id);
+
+    return res.status(200).send('Success');
 });
 
-app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor escuchando en puerto ${PORT}`);
 });
