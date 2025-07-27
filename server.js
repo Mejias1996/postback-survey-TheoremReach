@@ -1,43 +1,55 @@
 const express = require('express');
 const crypto = require('crypto');
+require('dotenv').config();
+
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-const SECRET_KEY = process.env.SECRET_KEY; // ahora usa .env
-
+// Base temporal para evitar duplicados
 const rewardedTransactions = new Set();
 
-function verifyHash(url, providedHash) {
-    const hmac = crypto.createHmac('sha1', SECRET_KEY);
-    hmac.update(url);
-    let hash = hmac.digest('base64');
-    hash = hash.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    return hash === providedHash;
+// Función para validar el hash como lo requiere TheoremReach
+function isValidHash(fullUrlWithoutHash, receivedHash) {
+    const secret = process.env.SECRET_KEY;
+    const hmac = crypto.createHmac('sha1', secret);
+    hmac.update(fullUrlWithoutHash);
+    let generatedHash = hmac.digest('base64');
+
+    // Sustitución de caracteres según RFC 4648
+    generatedHash = generatedHash
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+
+    return generatedHash === receivedHash;
 }
 
 app.get('/theorem/reward', (req, res) => {
     const { user_id, reward, tx_id, hash, debug } = req.query;
 
     if (debug === 'true') {
-        console.log('Debug callback recibido. Ignorando...');
-        return res.status(200).send('Ignored debug callback');
+        console.log('🧪 Test recibido (debug=true). No se guarda.');
+        return res.status(200).send('Test OK (debug=true)');
+    }
+
+    if (!user_id || !reward || !tx_id || !hash) {
+        return res.status(400).send('Faltan parámetros requeridos');
     }
 
     if (rewardedTransactions.has(tx_id)) {
-        console.log(`Transacción duplicada ignorada: ${tx_id}`);
-        return res.status(200).send('Transaction already processed');
+        return res.status(200).send('Ya procesado');
     }
 
-    const baseUrl = req.originalUrl.split('&hash=')[0];
-    const fullUrl = `https://${req.headers.host}${baseUrl}`;
-    const valid = verifyHash(fullUrl, hash);
+    // Parte de la URL sin el parámetro hash
+    const fullUrlWithoutHash = `https://postback-survey-theoremreach.onrender.com${req.originalUrl.split('&hash=')[0]}`;
 
-    if (!valid) {
-        console.log('❌ Hash inválido. Posible fraude.');
+    if (!isValidHash(fullUrlWithoutHash, hash)) {
+        console.log(`❌ Hash inválido:\n  ↳ URL: ${fullUrlWithoutHash}\n  ↳ Hash recibido: ${hash}`);
         return res.status(403).send('Invalid hash');
     }
 
-    console.log(`✅ Recompensa procesada para el usuario ${user_id}: ${reward} monedas.`);
+    // Procesa la recompensa
+    console.log(`✅ Usuario ${user_id} ha ganado ${reward} monedas. Transacción: ${tx_id}`);
     rewardedTransactions.add(tx_id);
 
     return res.status(200).send('Success');
