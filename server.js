@@ -5,40 +5,31 @@ const admin = require("firebase-admin");
 
 const app = express();
 
-// ✅ Ruta segura donde montas el secreto en Render o tu servidor
+// ✅ Carga segura del archivo de credenciales desde secrets
 const serviceAccountPath = "/etc/secrets/firebase-key.json";
 const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf8"));
 
 // ✅ Inicializa Firebase Admin SDK
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  databaseURL: "https://surveyrewardsap1.firebaseio.com", // ← TU project_id
+  databaseURL: "https://surveyrewardsap1.firebaseio.com", // ← Asegúrate que sea tu DB URL real
 });
 
 const db = admin.firestore();
 
-// ✅ Clave secreta para HMAC que te dio TheoremReach
+// ✅ Clave secreta de TheoremReach
 const THEOREM_SECRET = "d8e01d553dc47a3ef5b4088198d402c10b05b8f3";
 
-// ✅ Ruta para recibir postbacks de TheoremReach
+// ✅ Endpoint para postbacks de TheoremReach
 app.get("/theorem/reward", async (req, res) => {
   const originalUrl = req.originalUrl;
-  const queryString = originalUrl.split("?")[1];
-
   console.log("🌐 URL original:", originalUrl);
 
-  // Extrae y limpia los parámetros
-  const params = { ...req.query };
-  const receivedHash = params.hash;
-  delete params.hash;
+  const queryString = originalUrl.split("?")[1];
 
-  // Reconstruye el string que firmó TheoremReach (sin alterar el orden)
-  const queryParts = queryString
-    .split("&")
-    .filter(part => !part.startsWith("hash="));
-  const stringToSign = queryParts.join("&");
+  // 🔐 Prepara string a firmar quitando solo el hash al final
+  const stringToSign = queryString.replace(/&hash=.*$/, "");
 
-  // 🔐 Genera hash con HMAC SHA-1 como pide TheoremReach
   const generatedHash = crypto
     .createHmac("sha1", THEOREM_SECRET)
     .update(stringToSign)
@@ -47,10 +38,10 @@ app.get("/theorem/reward", async (req, res) => {
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 
-  console.log("❌ Hash recibido:", receivedHash);
+  console.log("❌ Hash recibido:", req.query.hash);
   console.log("🔐 Hash generado:", generatedHash);
 
-  if (generatedHash !== receivedHash) {
+  if (generatedHash !== req.query.hash) {
     console.warn("⚠️ Hash inválido. Ignorando.");
     return res.status(403).send("Invalid hash");
   }
@@ -58,7 +49,7 @@ app.get("/theorem/reward", async (req, res) => {
   try {
     const { user_id, reward, currency, tx_id } = req.query;
 
-    // ✅ Guarda en Firestore
+    // ✅ Guarda la recompensa en Firestore
     await db.collection("rewards").add({
       user_id,
       reward: Number(reward),
